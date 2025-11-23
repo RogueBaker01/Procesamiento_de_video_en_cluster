@@ -2,11 +2,8 @@ import socket
 import cv2
 import numpy as np
 
-ip_address_servidor_central = 'localhost'
+ip_address_servidor_central = '192.168.1.170'
 port_Servidor_Central = 8080
-
-socket_servidor_central = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
 
 class CineFilter:
     def __init__(self, width, height):
@@ -24,35 +21,23 @@ class CineFilter:
 
     def _create_vignette_mask(self, width, height):
         sigma = 0.6
-        
         kernel_x = cv2.getGaussianKernel(width, width * sigma)
         kernel_y = cv2.getGaussianKernel(height, height * sigma)
-        
         kernel = kernel_y * kernel_x.T
-        
         mask = kernel / kernel.max()
         return mask
 
     def apply_teal_orange(self, frame):
         b, g, r = cv2.split(frame)
-        
-        b = b.astype(float)
-        g = g.astype(float)
-        r = r.astype(float)
-        
-        b = b * 1.15 
-        
-        r = r * 1.15
-        
-        g = g * 0.95
-
+        b = b.astype(float) * 1.15
+        r = r.astype(float) * 1.15
+        g = g.astype(float) * 0.95
         merged = cv2.merge([b, g, r])
         merged = np.clip(merged, 0, 255).astype(np.uint8)
         return merged
 
     def apply_cinematic_style(self, frame):
         frame_colored = self.apply_teal_orange(frame)
-        
         frame_contrast = cv2.LUT(frame_colored, self.lut_contrast)
         
         frame_float = frame_contrast.astype(float)
@@ -64,70 +49,71 @@ class CineFilter:
         bar_height = int(self.height * 0.12)
         cv2.rectangle(frame_final, (0, 0), (self.width, bar_height), (0, 0, 0), -1)
         cv2.rectangle(frame_final, (0, self.height - bar_height), (self.width, self.height), (0, 0, 0), -1)
-        
         return frame_final
 
-def recibir_frame(conn):
+def recibir_paquete_con_id(conn):
     size_data = b""
     while len(size_data) < 4:
         packet = conn.recv(4 - len(size_data))
-        if not packet:
-            return None
+        if not packet: return None, None
         size_data += packet
+    total_size = int.from_bytes(size_data, byteorder='big')
     
-    frame_size = int.from_bytes(size_data, byteorder='big')
+    payload = b""
+    while len(payload) < total_size:
+        packet = conn.recv(min(4096, total_size - len(payload)))
+        if not packet: return None, None
+        payload += packet
+        
+    frame_id = int.from_bytes(payload[:4], byteorder='big')
+    img_data = payload[4:]
     
-    frame_data = b""
-    while len(frame_data) < frame_size:
-        packet = conn.recv(min(4096, frame_size - len(frame_data)))
-        if not packet:
-            return None
-        frame_data += packet
-    
-    nparr = np.frombuffer(frame_data, np.uint8)
+    nparr = np.frombuffer(img_data, np.uint8)
     frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
     
-    return frame
+    return frame_id, frame
 
-def enviar_frame(conn, frame):
+def enviar_paquete_con_id(conn, frame_id, frame):
     _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-    data = buffer.tobytes()
+    img_bytes = buffer.tobytes()
     
-    size_bytes = len(data).to_bytes(4, byteorder='big')
-    conn.sendall(size_bytes + data)
+    id_bytes = frame_id.to_bytes(4, byteorder='big')
+    payload = id_bytes + img_bytes
+    
+    size_bytes = len(payload).to_bytes(4, byteorder='big')
+    conn.sendall(size_bytes + payload)
 
 def main():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
-        socket_servidor_central.connect((ip_address_servidor_central, port_Servidor_Central))
+        sock.connect((ip_address_servidor_central, port_Servidor_Central))
         
-        # Identificarse como NODO
-        socket_servidor_central.sendall(b"NODO")
-        
-        print(f"Conectado al servidor central en {ip_address_servidor_central}:{port_Servidor_Central}")
+        sock.sendall(b"NODO".ljust(10))
+        print(f"Conectado al servidor {ip_address_servidor_central}")
         
         cine_filter = None
         
         while True:
-            frame = recibir_frame(socket_servidor_central)
+            frame_id, frame = recibir_paquete_con_id(sock)
             
             if frame is None:
-                print("Conexión cerrada por el servidor")
+                print("Servidor cerró conexión")
                 break
             
             if cine_filter is None:
-                height, width = frame.shape[:2]
-                cine_filter = CineFilter(width, height)
-                print(f"Filtro inicializado con dimensiones: {width}x{height}")
+                h, w = frame.shape[:2]
+                cine_filter = CineFilter(w, h)
+                print(f"Configurado filtro para {w}x{h}")
             
-            frame_procesado = cine_filter.apply_cinematic_style(frame)
+            frame_proc = cine_filter.apply_cinematic_style(frame)
             
-            enviar_frame(socket_servidor_central, frame_procesado)
+            enviar_paquete_con_id(sock, frame_id, frame_proc)
+            print(f"Procesado Frame ID: {frame_id}")
             
     except Exception as e:
         print(f"Error: {e}")
     finally:
-        socket_servidor_central.close()
-        print("Conexión cerrada")
+        sock.close()
 
 if __name__ == "__main__":
     main()

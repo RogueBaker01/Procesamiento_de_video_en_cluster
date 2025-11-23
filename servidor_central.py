@@ -16,120 +16,105 @@ clientes_conectados = []
 lock_nodos = threading.Lock()
 lock_clientes = threading.Lock()
 
-fps = 30
-video_writer = None
-guardando_video = False
+def recibir_bytes_exactos(conn, num_bytes):
+    data = b""
+    while len(data) < num_bytes:
+        packet = conn.recv(num_bytes - len(data))
+        if not packet:
+            return None
+        data += packet
+    return data
 
-
-def recibir_frame(conn):
+def recibir_paquete(conn):
     try:
-        size_data = b""
-        while len(size_data) < 4:
-            packet = conn.recv(4 - len(size_data))
-            if not packet:
-                return None
-            size_data += packet
+        size_data = recibir_bytes_exactos(conn, 4)
+        if not size_data: return None
         
         frame_size = int.from_bytes(size_data, byteorder='big')
         
-        frame_data = b""
-        while len(frame_data) < frame_size:
-            packet = conn.recv(min(4096, frame_size - len(frame_data)))
-            if not packet:
-                return None
-            frame_data += packet
-        
-        nparr = np.frombuffer(frame_data, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        return frame
+        payload = b""
+        while len(payload) < frame_size:
+            packet = conn.recv(min(4096, frame_size - len(payload)))
+            if not packet: return None
+            payload += packet
+            
+        return payload
     except Exception as e:
-        print(f"Error al recibir frame: {e}")
+        print(f"Error al recibir paquete: {e}")
         return None
 
-
-def enviar_frame(conn, frame):
+def enviar_paquete_generico(conn, payload):
     try:
-        _, buffer = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 90])
-        data = buffer.tobytes()
-        
-        size_bytes = len(data).to_bytes(4, byteorder='big')
-        conn.sendall(size_bytes + data)
+        size_bytes = len(payload).to_bytes(4, byteorder='big')
+        conn.sendall(size_bytes + payload)
         return True
     except Exception as e:
-        print(f"Error al enviar frame: {e}")
+        print(f"Error al enviar paquete: {e}")
         return False
-
 
 def manejar_cliente(conn, addr):
     print(f"Cliente conectado desde {addr}")
-    
     with lock_clientes:
         clientes_conectados.append(conn)
     
     try:
         while True:
-            frame = recibir_frame(conn)
-            if frame is None:
-                print(f"Cliente {addr} desconectado")
+            payload = recibir_paquete(conn)
+            if payload is None:
+                print(f"Cliente {addr} desconectado o fin de transmisión")
                 break
             
-            cola_frames_entrada.put(frame)
-            print(f"Frame recibido del cliente {addr}, cola: {cola_frames_entrada.qsize()}")
+            cola_frames_entrada.put(payload)
             
             try:
-                frame_procesado = cola_frames_procesados.get(timeout=5)
-                if not enviar_frame(conn, frame_procesado):
-                    break
-            except queue.Empty:
-                print("Timeout esperando frame procesado")
+                while not cola_frames_procesados.empty():
+                    payload_procesado = cola_frames_procesados.get_nowait()
+                    if not enviar_paquete_generico(conn, payload_procesado):
+                        return
+            except:
+                pass
                 
     except Exception as e:
         print(f"Error con cliente {addr}: {e}")
     finally:
         with lock_clientes:
-            if conn in clientes_conectados:
-                clientes_conectados.remove(conn)
+            if conn in clientes_conectados: clientes_conectados.remove(conn)
         conn.close()
 
-
 def manejar_nodo(conn, addr):
-    """Maneja la conexión de un nodo de procesamiento"""
-    print(f"Nodo de procesamiento conectado desde {addr}")
-    
+    print(f"Nodo conectado desde {addr}")
     with lock_nodos:
         nodos_disponibles.append(conn)
     
     try:
         while True:
             try:
-                frame = cola_frames_entrada.get(timeout=1)
+                payload = cola_frames_entrada.get(timeout=1)
             except queue.Empty:
                 continue
             
-            if not enviar_frame(conn, frame):
-                print(f"Error al enviar frame al nodo {addr}")
+            if not enviar_paquete_generico(conn, payload):
+                print(f"Error enviando a nodo {addr}")
+                cola_frames_entrada.put(payload)
                 break
             
-            frame_procesado = recibir_frame(conn)
-            if frame_procesado is None:
-                print(f"Nodo {addr} desconectado")
+            payload_procesado = recibir_paquete(conn)
+            if payload_procesado is None:
+                print(f"Nodo {addr} desconectado esperando respuesta")
+                cola_frames_entrada.put(payload)
                 break
             
-            cola_frames_procesados.put(frame_procesado)
+            cola_frames_procesados.put(payload_procesado)
             print(f"Frame procesado recibido del nodo {addr}")
             
     except Exception as e:
         print(f"Error con nodo {addr}: {e}")
     finally:
         with lock_nodos:
-            if conn in nodos_disponibles:
-                nodos_disponibles.remove(conn)
+            if conn in nodos_disponibles: nodos_disponibles.remove(conn)
         conn.close()
 
-
 def aceptar_conexiones():
-    """Acepta conexiones entrantes y las clasifica (cliente o nodo)"""
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind((Broker_host, Broker_port))
@@ -140,97 +125,44 @@ def aceptar_conexiones():
     while True:
         conn, addr = server_socket.accept()
         
-        # Recibir identificación (CLIENTE o NODO)
-        identificacion = conn.recv(10).decode('utf-8').strip()
-        
-        if identificacion == "CLIENTE":
-            thread = threading.Thread(target=manejar_cliente, args=(conn, addr))
-            thread.daemon = True
-            thread.start()
-        elif identificacion == "NODO":
-            thread = threading.Thread(target=manejar_nodo, args=(conn, addr))
-            thread.daemon = True
-            thread.start()
-        else:
-            print(f"Identificación desconocida de {addr}: {identificacion}")
-            conn.close()
-
-
-def procesar_frames_a_video():
-    """Guarda los frames procesados en un archivo de video"""
-    global video_writer, guardando_video
-    
-    output_filename = f"video_procesado_{int(time.time())}.mp4"
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v') #type: ignore
-    
-    print("Esperando frames para iniciar grabación...")
-    
-    frame = cola_frames_procesados.get()
-    height, width = frame.shape[:2]
-    
-    video_writer = cv2.VideoWriter(output_filename, fourcc, fps, (width, height))
-    guardando_video = True
-    
-    print(f"Iniciando grabación en {output_filename} ({width}x{height} @ {fps}fps)")
-    
-    video_writer.write(frame)
-    frame_count = 1
-    
-    try:
-        while guardando_video:
-            try:
-                frame = cola_frames_procesados.get(timeout=5)
-                video_writer.write(frame)
-                frame_count += 1
-                
-                if frame_count % 30 == 0: 
-                    print(f"Frames guardados: {frame_count}")
-                    
-            except queue.Empty:
-                print("Timeout esperando frames para guardar")
+        try:
+            identificacion = recibir_bytes_exactos(conn, 10)
+            if not identificacion:
+                conn.close()
                 continue
                 
-    except KeyboardInterrupt:
-        print("\nDeteniendo grabación...")
-    finally:
-        if video_writer:
-            video_writer.release()
-        print(f"Video guardado: {output_filename} ({frame_count} frames)")
-
-
-def enviar_frames_a_nodos():
-    """Distribuye frames de la cola de entrada a los nodos disponibles"""
-    print("Distribuidor de frames iniciado")
-    while True:
-        if not nodos_disponibles:
-            time.sleep(0.1)
-            continue
-        
-        try:
-            frame = cola_frames_entrada.get(timeout=1)
-            cola_frames_entrada.put(frame)
-        except queue.Empty:
-            continue
-
-
+            id_str = identificacion.decode('utf-8').strip()
+            
+            if id_str == "CLIENTE":
+                t = threading.Thread(target=manejar_cliente, args=(conn, addr))
+                t.daemon = True
+                t.start()
+            elif id_str == "NODO":
+                t = threading.Thread(target=manejar_nodo, args=(conn, addr))
+                t.daemon = True
+                t.start()
+            else:
+                print(f"ID desconocida: {id_str}")
+                conn.close()
+        except Exception as e:
+            print(f"Error en handshake: {e}")
+            conn.close()
 
 def main():
-    print("=== SERVIDOR CENTRAL DE PROCESAMIENTO DE VIDEO ===")
+    t = threading.Thread(target=aceptar_conexiones)
+    t.daemon = True
+    t.start()
     
-    thread_conexiones = threading.Thread(target=aceptar_conexiones)
-    thread_conexiones.daemon = True
-    thread_conexiones.start()
-    
-    print("\nEsperando conexiones de clientes y nodos...")
-    print("Presiona Ctrl+C para detener el servidor\n")
-    
-    try:
-        while True:
-            time.sleep(1)
-            
-    except KeyboardInterrupt:
-        print("\n\nCerrando servidor...")
-
+    while True:
+        try:
+            if clientes_conectados and not cola_frames_procesados.empty():
+                payload = cola_frames_procesados.get(timeout=0.1)
+                if not enviar_paquete_generico(clientes_conectados[0], payload):
+                    cola_frames_procesados.put(payload)
+            else:
+                time.sleep(0.01)
+        except:
+            pass
 
 if __name__ == "__main__":
     main()
