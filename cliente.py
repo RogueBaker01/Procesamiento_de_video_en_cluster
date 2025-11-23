@@ -7,7 +7,7 @@ import os
 import threading
 import time
 
-SERVER_HOST = '192.168.1.170'
+SERVER_HOST = 'localhost'
 SERVER_PORT = 8080
 
 buffer_recepcion = {}

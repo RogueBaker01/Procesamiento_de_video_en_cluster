@@ -2,7 +2,7 @@ import socket
 import cv2
 import numpy as np
 
-ip_address_servidor_central = '192.168.1.170'
+ip_address_servidor_central = 'localhost'
 port_Servidor_Central = 8080
 
 class CineFilter:
