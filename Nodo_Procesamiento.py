@@ -2,7 +2,7 @@ import socket
 import cv2
 import numpy as np
 
-SERVIDOR_HOST = '148.220.210.115'
+SERVIDOR_HOST = '192.168.1.73'
 SERVIDOR_PORT = 8080
 JPEG_QUALITY = 90
 VIGNETTE_SIGMA = 0.6
