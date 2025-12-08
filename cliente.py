@@ -190,8 +190,7 @@ def procesar_video(video_path, progress_container):
 
 def main():
     st.set_page_config(
-        page_title="Procesador de Video",
-        page_icon="▶",
+        page_title="Procesador de Video por cluster",
         layout="wide"
     )
     
@@ -221,7 +220,7 @@ def main():
         </style>
     """, unsafe_allow_html=True)
     
-    st.title("Procesador de Video Distribuido")
+    st.title("Procesador de Video por cluster")
     st.markdown("---")
     
     uploaded_file = st.file_uploader(
