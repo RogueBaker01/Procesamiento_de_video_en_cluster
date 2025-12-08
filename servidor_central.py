@@ -8,7 +8,7 @@ import json
 import os
 import tempfile
 
-BROKER_HOST = '0.0.0.0'
+BROKER_HOST = 'localhost'
 BROKER_PORT = 8080
 MAX_PAYLOAD_SIZE = 10 * 1024 * 1024
 BUFFER_SIZE = 4096
@@ -19,6 +19,9 @@ sesiones_clientes = {}
 lock_sesiones = threading.Lock()
 nodos_disponibles = []
 lock_nodos = threading.Lock()
+
+frames_en_proceso = {}
+lock_frames_proceso = threading.Lock()
 
 def log(level, message):
     timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
@@ -199,47 +202,88 @@ def manejar_nodo(conn, addr):
         nodos_disponibles.append(conn)
     
     frames_procesados = 0
+    frame_actual = None
     
     try:
         while True:
             try:
                 cliente_id, payload = cola_frames_entrada.get(timeout=QUEUE_TIMEOUT)
+                frame_id = int.from_bytes(payload[:4], byteorder='big')
+                
+                log("INFO", f"Nodo {nodo_id} → Procesando Frame ID: {frame_id}")
+                
+                with lock_frames_proceso:
+                    frames_en_proceso[frame_id] = (nodo_id, cliente_id, payload)
+                
+                frame_actual = (frame_id, cliente_id, payload)
+                
             except queue.Empty:
                 continue
             
             if not enviar_paquete(conn, payload):
                 log("ERROR", f"Error enviando frame a nodo {nodo_id}")
-                cola_frames_entrada.put((cliente_id, payload))
+                if frame_actual:
+                    cola_frames_entrada.put((frame_actual[1], frame_actual[2]))
+                    with lock_frames_proceso:
+                        if frame_actual[0] in frames_en_proceso:
+                            del frames_en_proceso[frame_actual[0]]
                 break
             
             payload_procesado = recibir_paquete(conn)
             if payload_procesado is None:
                 log("ERROR", f"Nodo {nodo_id} no respondió")
-                cola_frames_entrada.put((cliente_id, payload))
+                if frame_actual:
+                    cola_frames_entrada.put((frame_actual[1], frame_actual[2]))
+                    with lock_frames_proceso:
+                        if frame_actual[0] in frames_en_proceso:
+                            del frames_en_proceso[frame_actual[0]]
                 break
             
-            frame_id = int.from_bytes(payload_procesado[:4], byteorder='big')
+            frame_id_proc = int.from_bytes(payload_procesado[:4], byteorder='big')
             img_data = payload_procesado[4:]
             nparr = np.frombuffer(img_data, np.uint8)
             frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             
+            log("INFO", f"Nodo {nodo_id} ← Frame ID: {frame_id_proc} completado")
+            
             with lock_sesiones:
                 if cliente_id in sesiones_clientes:
-                    sesiones_clientes[cliente_id]['frames'][frame_id] = frame
-                    sesiones_clientes[cliente_id]['procesados'].add(frame_id)
+                    sesiones_clientes[cliente_id]['frames'][frame_id_proc] = frame
+                    sesiones_clientes[cliente_id]['procesados'].add(frame_id_proc)
                     frames_procesados += 1
             
-            if frames_procesados % 10 == 0:
-                log("INFO", f"Nodo {nodo_id}: {frames_procesados} frames procesados")
+            with lock_frames_proceso:
+                if frame_id_proc in frames_en_proceso:
+                    del frames_en_proceso[frame_id_proc]
+            
+            frame_actual = None
             
     except Exception as e:
         log("ERROR", f"Error con nodo {nodo_id}: {e}")
     finally:
+        if frame_actual:
+            log("WARNING", f"Nodo {nodo_id} desconectado con frame {frame_actual[0]} en proceso, reencolado")
+            cola_frames_entrada.put((frame_actual[1], frame_actual[2]))
+            with lock_frames_proceso:
+                if frame_actual[0] in frames_en_proceso:
+                    del frames_en_proceso[frame_actual[0]]
+        
+        frames_perdidos = []
+        with lock_frames_proceso:
+            for fid, (nid, cid, payload) in list(frames_en_proceso.items()):
+                if nid == nodo_id:
+                    frames_perdidos.append((fid, cid, payload))
+                    del frames_en_proceso[fid]
+        
+        for fid, cid, payload in frames_perdidos:
+            log("WARNING", f"Reencolando frame {fid} del nodo desconectado {nodo_id}")
+            cola_frames_entrada.put((cid, payload))
+        
         with lock_nodos:
             if conn in nodos_disponibles:
                 nodos_disponibles.remove(conn)
         conn.close()
-        log("INFO", f"Nodo {nodo_id} desconectado (procesó {frames_procesados} frames)")
+        log("INFO", f"Nodo {nodo_id} desconectado (procesó {frames_procesados} frames en total)")
 
 def aceptar_conexiones():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

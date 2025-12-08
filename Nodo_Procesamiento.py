@@ -2,12 +2,11 @@ import socket
 import cv2
 import numpy as np
 
-SERVIDOR_HOST = '192.168.1.73'
+SERVIDOR_HOST = 'localhost'
 SERVIDOR_PORT = 8080
 JPEG_QUALITY = 90
 VIGNETTE_SIGMA = 0.6
 BAR_HEIGHT_RATIO = 0.12
-CONNECTION_TIMEOUT = 30
 
 class CineFilter:
     def __init__(self, width, height):
@@ -127,7 +126,6 @@ def main():
     print("="*60)
     
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(CONNECTION_TIMEOUT)
     
     try:
         print(f"[INFO] Conectando a {SERVIDOR_HOST}:{SERVIDOR_PORT}...")
@@ -153,6 +151,7 @@ def main():
                 cine_filter = CineFilter(w, h)
                 print(f"[INFO] Filtro cinemático configurado para resolución {w}x{h}")
             
+            print(f"[INFO] Procesando Frame ID: {frame_id}")
             frame_procesado = cine_filter.apply_cinematic_style(frame)
             
             if not enviar_paquete_con_id(sock, frame_id, frame_procesado):
@@ -160,14 +159,10 @@ def main():
                 break
             
             frames_procesados += 1
-            
-            if frames_procesados % 10 == 0:
-                print(f"[INFO] Procesados {frames_procesados} frames")
+            print(f"[INFO] Frame ID: {frame_id} completado (Total: {frames_procesados})")
         
         print(f"[INFO] Total de frames procesados: {frames_procesados}")
         
-    except socket.timeout:
-        print("[ERROR] Timeout de conexión. Verifica que el servidor esté ejecutándose.")
     except ConnectionRefusedError:
         print("[ERROR] Conexión rechazada. Verifica que el servidor esté ejecutándose.")
     except Exception as e:
