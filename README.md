@@ -42,7 +42,7 @@ Este proyecto implementa un sistema distribuido para procesar videos aplicando e
 │  └──────┬───────┘   │
 │         │           │
 │  ┌──────▼───────┐   │
-│  │  Ensamblador │   │ ← **NUEVO**
+│  │  Ensamblador │   │
 │  │  de Video    │   │
 │  └──────────────┘   │
 └──────┬──────────────┘
@@ -55,14 +55,6 @@ Este proyecto implementa un sistema distribuido para procesar videos aplicando e
 │Nodo1│ │Nodo2│ │Nodo3│ │Nodo*│
 └─────┘ └─────┘ └─────┘ └─────┘
 ```
-
-### Ventajas de la Nueva Arquitectura
-
-- ✅ **Cliente más ligero**: No necesita OpenCV para ensamblar video
-- ✅ **Menos tráfico de red**: Un solo video vs múltiples frames
-- ✅ **Control centralizado**: El servidor gestiona la calidad final
-- ✅ **Mejor escalabilidad**: Clientes con recursos limitados
-
 ## 🛠️ Requisitos
 
 ```txt
@@ -153,8 +145,6 @@ Esto abrirá una interfaz web moderna en tu navegador (por defecto en `http://lo
 - **JPEG_QUALITY**: `90`
 - **VIGNETTE_SIGMA**: `0.6`
 
-Para ejecutar en red local, modifica las IPs en el código.
-
 ## 📊 Formatos Soportados
 
 - MP4
@@ -164,78 +154,8 @@ Para ejecutar en red local, modifica las IPs en el código.
 
 ## ✨ Características de la Nueva Versión
 
-### Interfaz de Usuario Mejorada
-- 🎨 Diseño moderno con gradientes y colores atractivos
-- 📊 Métricas en tiempo real (frames enviados, velocidad)
-- 📈 Barra de progreso detallada
-- ✅ Mensajes de estado informativos con emojis
-- 🎬 Previsualización de video antes y después
-
-### Mejoras de Código
-- 📝 Documentación completa con docstrings
-- 🔒 Manejo robusto de errores con excepciones específicas
-- 📋 Logging estructurado con timestamps
-- 🧹 Limpieza automática de archivos temporales
-- ⚙️ Constantes de configuración bien organizadas
-
-### Mejoras de Arquitectura
-- 🎯 Servidor ensambla el video (lógica centralizada)
-- 📦 Protocolo JSON para metadata
-- 🔄 Gestión de sesiones por cliente
-- 🚀 Mejor escalabilidad y rendimiento
-
-## ⚠️ Notas Importantes
-
-- Los nodos deben estar conectados antes de procesar un video
-- La calidad de compresión JPEG está configurada al 90%
-- El sistema usa sockets TCP para comunicación confiable
-- Los frames se transmiten como imágenes JPEG codificadas
-- El video final se ensambla en el servidor, no en el cliente
-
-## 🐛 Solución de Problemas
-
-### El cliente no se conecta al servidor
-- Verifica que el servidor central esté ejecutándose
-- Confirma que el puerto 8080 no esté en uso por otra aplicación
-- Revisa la configuración de firewall
-- Verifica que la IP del servidor sea correcta en `cliente.py`
-
-### Los nodos no procesan frames
-- Asegúrate de tener al menos un nodo conectado antes de enviar el video
-- Verifica que los nodos se hayan conectado correctamente al servidor
-- Revisa los logs del servidor para ver si hay errores
-
-### El video procesado no se descarga
-- Revisa los permisos de escritura en el directorio temporal
-- Verifica que haya suficiente espacio en disco
-- Comprueba que el servidor haya ensamblado correctamente el video
-
-### Error "Tiempo de conexión agotado"
-- Verifica que el servidor esté ejecutándose
-- Comprueba la conectividad de red
-- Aumenta `CONNECTION_TIMEOUT` si la red es lenta
-
-## 📝 Registro de Cambios
-
-### v2.0 (Diciembre 2025)
-- ✅ Nueva arquitectura: servidor ensambla el video
-- ✅ Interfaz de usuario moderna y amigable
-- ✅ Logging mejorado con timestamps
-- ✅ Documentación completa en código
-- ✅ Manejo robusto de errores
-- ✅ Validación de archivos
-- ✅ Limpieza automática de temporales
-
-### v1.0 (Inicial)
-- Arquitectura básica cliente-servidor-nodo
-- Procesamiento distribuido de frames
-- Filtros cinemáticos básicos
-
-## 👥 Autores
-
-Proyecto desarrollado para el curso de Sistemas Distribuidos - 5to Semestre
-
 ## 📝 Licencia
 
 Este proyecto es de uso educativo.
+
 
