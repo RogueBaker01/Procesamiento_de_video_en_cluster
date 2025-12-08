@@ -68,15 +68,15 @@ def validar_video(video_path):
     try:
         file_size_mb = os.path.getsize(video_path) / (1024 * 1024)
         if file_size_mb > MAX_FILE_SIZE_MB:
-            return False, f"El archivo es demasiado grande ({file_size_mb:.1f} MB). Máximo: {MAX_FILE_SIZE_MB} MB"
+            return False, f"Archivo demasiado grande ({file_size_mb:.1f} MB). Máximo: {MAX_FILE_SIZE_MB} MB"
         
         cap = cv2.VideoCapture(video_path)
         if not cap.isOpened():
-            return False, "No se puede abrir el video. Formato no soportado."
+            return False, "No se puede abrir el video"
         
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if total_frames == 0:
-            return False, "El video no contiene frames."
+            return False, "El video no contiene frames"
         
         cap.release()
         return True, "OK"
@@ -91,28 +91,15 @@ def procesar_video(video_path, progress_container):
         with progress_container:
             status_text = st.empty()
             progress_bar = st.progress(0)
-            stats_col1, stats_col2, stats_col3 = st.columns(3)
-            
-            with stats_col1:
-                st.metric("Estado", "Conectando...")
-            with stats_col2:
-                frames_metric = st.empty()
-                frames_metric.metric("Frames Enviados", "0")
-            with stats_col3:
-                speed_metric = st.empty()
-                speed_metric.metric("Velocidad", "0 fps")
+            stats_text = st.empty()
         
-        status_text.info("🔌 Conectando al servidor...")
+        status_text.text("Conectando al servidor...")
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(CONNECTION_TIMEOUT)
         sock.connect((SERVER_HOST, SERVER_PORT))
         
         sock.sendall(b"CLIENTE".ljust(10))
-        
-        with stats_col1:
-            st.metric("Estado", "Conectado ✅")
-        status_text.success("✅ Conectado al cluster de procesamiento")
-        time.sleep(0.5)
+        status_text.text("Conectado al servidor")
         
         cap = cv2.VideoCapture(video_path)
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
@@ -120,7 +107,7 @@ def procesar_video(video_path, progress_container):
         width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         
-        status_text.info("📋 Enviando metadata del video...")
+        status_text.text("Enviando metadata...")
         metadata = {
             'total_frames': total_frames,
             'fps': fps,
@@ -130,10 +117,10 @@ def procesar_video(video_path, progress_container):
         metadata_json = json.dumps(metadata).encode('utf-8')
         
         if not enviar_paquete(sock, metadata_json):
-            st.error("❌ Error enviando metadata")
+            st.error("Error enviando metadata")
             return None
         
-        status_text.info(f"📤 Enviando {total_frames} frames al cluster...")
+        status_text.text(f"Enviando {total_frames} frames...")
         
         start_time = time.time()
         for frame_id in range(total_frames):
@@ -148,61 +135,54 @@ def procesar_video(video_path, progress_container):
             payload = id_bytes + img_bytes
             
             if not enviar_paquete(sock, payload):
-                st.error(f"❌ Error enviando frame {frame_id}")
+                st.error(f"Error enviando frame {frame_id}")
                 return None
             
-            if frame_id % 5 == 0 or frame_id == total_frames - 1:
+            if frame_id % 10 == 0 or frame_id == total_frames - 1:
                 progreso = (frame_id + 1) / total_frames
                 progress_bar.progress(progreso)
                 
                 elapsed = time.time() - start_time
                 speed = (frame_id + 1) / elapsed if elapsed > 0 else 0
                 
-                frames_metric.metric("Frames Enviados", f"{frame_id + 1}/{total_frames}")
-                speed_metric.metric("Velocidad", f"{speed:.1f} fps")
+                stats_text.text(f"Progreso: {frame_id + 1}/{total_frames} frames | {speed:.1f} fps")
         
         cap.release()
         
-        with stats_col1:
-            st.metric("Estado", "Procesando...")
-        status_text.warning("⚙️ Procesando video en el cluster... Esto puede tomar unos momentos.")
+        status_text.text("Procesando en el servidor...")
         progress_bar.progress(1.0)
-        
-        status_text.info("⏳ Esperando video procesado del servidor...")
         
         response_payload = recibir_paquete(sock)
         if not response_payload:
-            st.error("❌ Error recibiendo respuesta del servidor")
+            st.error("Error recibiendo respuesta del servidor")
             return None
         
         response = json.loads(response_payload.decode('utf-8'))
         
         if response['status'] != 'ready':
-            st.error(f"❌ Error del servidor: {response.get('message', 'Desconocido')}")
+            st.error(f"Error del servidor: {response.get('message', 'Desconocido')}")
             return None
         
         video_size = response['size']
-        status_text.info(f"📥 Descargando video procesado ({video_size / (1024*1024):.1f} MB)...")
+        status_text.text(f"Descargando video procesado ({video_size / (1024*1024):.1f} MB)...")
         
         video_bytes = recibir_paquete(sock)
         if not video_bytes:
-            st.error("❌ Error recibiendo video procesado")
+            st.error("Error recibiendo video procesado")
             return None
         
-        with stats_col1:
-            st.metric("Estado", "Completado ✅")
-        status_text.success("🎉 ¡Video procesado exitosamente!")
+        status_text.text("Procesamiento completado")
         
         return video_bytes
         
     except socket.timeout:
-        st.error("❌ Tiempo de conexión agotado. Verifica que el servidor esté ejecutándose.")
+        st.error("Tiempo de conexión agotado")
         return None
     except ConnectionRefusedError:
-        st.error("❌ No se pudo conectar al servidor. Verifica la dirección y puerto.")
+        st.error("No se pudo conectar al servidor")
         return None
     except Exception as e:
-        st.error(f"❌ Error inesperado: {e}")
+        st.error(f"Error: {e}")
         return None
     finally:
         if sock:
@@ -210,148 +190,87 @@ def procesar_video(video_path, progress_container):
 
 def main():
     st.set_page_config(
-        page_title="🎬 Cluster Video Processor",
-        page_icon="🎬",
-        layout="wide",
-        initial_sidebar_state="collapsed"
+        page_title="Procesador de Video",
+        page_icon="▶",
+        layout="wide"
     )
     
     st.markdown("""
         <style>
-        .main-header {
-            font-size: 3rem;
-            font-weight: 700;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            text-align: center;
-            margin-bottom: 1rem;
+        .stApp {
+            background-color: #1a1a1a;
         }
-        .subtitle {
-            text-align: center;
-            color: #718096;
-            font-size: 1.2rem;
-            margin-bottom: 2rem;
+        .stMarkdown, .stText {
+            color: #e0e0e0;
         }
-        .info-card {
-            background: linear-gradient(135deg, #667eea15 0%, #764ba215 100%);
-            padding: 1.5rem;
-            border-radius: 10px;
-            border-left: 4px solid #667eea;
-            margin: 1rem 0;
+        h1, h2, h3 {
+            color: #ffffff;
         }
         .stButton>button {
-            width: 100%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            font-size: 1.1rem;
-            padding: 0.75rem 2rem;
-            border: none;
-            border-radius: 8px;
-            font-weight: 600;
-            transition: transform 0.2s;
+            background-color: #2d2d2d;
+            color: #ffffff;
+            border: 1px solid #444444;
         }
         .stButton>button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 7px 14px rgba(50,50,93,.1), 0 3px 6px rgba(0,0,0,.08);
+            background-color: #3d3d3d;
+            border-color: #555555;
+        }
+        .stProgress > div > div {
+            background-color: #4a4a4a;
         }
         </style>
     """, unsafe_allow_html=True)
     
-    st.markdown('<h1 class="main-header">🎬 Procesador de Video Distribuido</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="subtitle">Aplica filtros cinemáticos profesionales usando procesamiento en cluster</p>', unsafe_allow_html=True)
-    
-    with st.expander("ℹ️ Acerca del Sistema", expanded=False):
-        st.markdown("""
-        ### 🎨 Efectos Aplicados
-        - **Filtro Teal-Orange**: Color grading cinematográfico profesional
-        - **Curva de Contraste S**: Mejora el contraste dinámico
-        - **Viñeta**: Oscurecimiento gradual en los bordes
-        - **Barras Cinemáticas**: Formato panorámico (letterbox)
-        
-        ### ⚙️ Tecnología
-        - **Procesamiento Distribuido**: Múltiples nodos trabajan en paralelo
-        - **Alta Calidad**: Compresión JPEG al 90%
-        - **Formatos Soportados**: MP4, AVI, MOV, MKV
-        """)
-    
+    st.title("Procesador de Video Distribuido")
     st.markdown("---")
     
-    col_upload, col_spacer, col_preview = st.columns([1, 0.1, 1])
-    
-    with col_upload:
-        st.markdown("### 📁 Cargar Video")
-        
-        uploaded_file = st.file_uploader(
-            "Selecciona tu video",
-            type=['mp4', 'avi', 'mov', 'mkv'],
-            help=f"Tamaño máximo: {MAX_FILE_SIZE_MB} MB"
-        )
-        
-        if uploaded_file:
-            file_size_mb = uploaded_file.size / (1024 * 1024)
-            
-            st.markdown('<div class="info-card">', unsafe_allow_html=True)
-            st.markdown(f"**📄 Archivo:** {uploaded_file.name}")
-            st.markdown(f"**💾 Tamaño:** {file_size_mb:.2f} MB")
-            st.markdown('</div>', unsafe_allow_html=True)
-            
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp:
-                tmp.write(uploaded_file.read())
-                video_path = tmp.name
-                temp_files.append(video_path)
-            
-            es_valido, mensaje = validar_video(video_path)
-            
-            if not es_valido:
-                st.error(f"❌ {mensaje}")
-            else:
-                st.video(video_path)
-                
-                if st.button("🚀 Iniciar Procesamiento en Cluster", type="primary"):
-                    with col_preview:
-                        st.markdown("### 📊 Progreso del Procesamiento")
-                        progress_container = st.container()
-                        
-                        video_bytes = procesar_video(video_path, progress_container)
-                        
-                        if video_bytes:
-                            output_path = tempfile.mktemp(suffix='_procesado.mp4')
-                            temp_files.append(output_path)
-                            
-                            with open(output_path, 'wb') as f:
-                                f.write(video_bytes)
-                            
-                            st.markdown("---")
-                            st.markdown("### 🎉 Resultado")
-                            st.success("✅ ¡Video procesado exitosamente!")
-                            
-                            st.video(output_path)
-                            
-                            with open(output_path, 'rb') as f:
-                                st.download_button(
-                                    label="⬇️ Descargar Video Procesado",
-                                    data=f,
-                                    file_name=f"procesado_{uploaded_file.name}",
-                                    mime="video/mp4",
-                                    type="primary"
-                                )
-    
-    with col_preview:
-        if not uploaded_file:
-            st.markdown("### 👈 Comienza subiendo un video")
-            st.info("""
-            Sube un video en el panel izquierdo para comenzar el procesamiento distribuido.
-            
-            El sistema utilizará múltiples nodos de procesamiento en paralelo para aplicar
-            filtros cinemáticos profesionales a tu video.
-            """)
-    
-    st.markdown("---")
-    st.markdown(
-        "<p style='text-align: center; color: #718096;'>💡 Asegúrate de que el servidor central y los nodos de procesamiento estén ejecutándose</p>",
-        unsafe_allow_html=True
+    uploaded_file = st.file_uploader(
+        "Seleccionar video",
+        type=['mp4', 'avi', 'mov', 'mkv']
     )
+    
+    if uploaded_file:
+        file_size_mb = uploaded_file.size / (1024 * 1024)
+        
+        st.text(f"Archivo: {uploaded_file.name}")
+        st.text(f"Tamaño: {file_size_mb:.2f} MB")
+        
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp4') as tmp:
+            tmp.write(uploaded_file.read())
+            video_path = tmp.name
+            temp_files.append(video_path)
+        
+        es_valido, mensaje = validar_video(video_path)
+        
+        if not es_valido:
+            st.error(mensaje)
+        else:
+            st.video(video_path)
+            
+            if st.button("Procesar Video"):
+                st.markdown("---")
+                progress_container = st.container()
+                
+                video_bytes = procesar_video(video_path, progress_container)
+                
+                if video_bytes:
+                    output_path = tempfile.mktemp(suffix='_procesado.mp4')
+                    temp_files.append(output_path)
+                    
+                    with open(output_path, 'wb') as f:
+                        f.write(video_bytes)
+                    
+                    st.markdown("---")
+                    st.subheader("Video Procesado")
+                    st.video(output_path)
+                    
+                    with open(output_path, 'rb') as f:
+                        st.download_button(
+                            label="Descargar Video",
+                            data=f,
+                            file_name=f"procesado_{uploaded_file.name}",
+                            mime="video/mp4"
+                        )
 
 if __name__ == "__main__":
     main()
